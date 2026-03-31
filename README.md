@@ -34,18 +34,6 @@ Public health datasets such as BRFSS are complex and high-dimensional. This proj
 
 ---
 
-## Project Structure
-brfss-dashboard/
-│
-├── app.R              # Main Shiny dashboard
-├── R/                 # Data preprocessing & analysis scripts
-├── data/              # (excluded due to size)
-├── DESCRIPTION        # Project dependencies
-├── README.md
-└── .gitignore
-
----
-
 ## Dataset
 Source: CDC Behavioral Risk Factor Surveillance System (BRFSS)  
 https://www.cdc.gov/brfss/
