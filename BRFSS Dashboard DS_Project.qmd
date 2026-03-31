@@ -1,0 +1,443 @@
+---
+title: "BRFSS_Dashboard"
+format: html
+editor: visual
+runtime: shiny
+---
+
+```{r Load Libraries}
+library(tidyverse)
+library(stringr)
+library(plotly)
+library(arrow) 
+library(shiny)
+library(bslib)
+```
+
+```{r Load CSV and Parquet}
+df <- readr::read_csv(" DS_Project.csv")
+write_parquet(df, "DS_Project.parquet")
+```
+
+Always read csv from parquet.
+
+```{r Read parquet}
+df <- arrow::read_parquet("DS_Project.parquet")
+```
+
+Plotting helper
+
+```{r Plotting helper}
+plot_confidence_bar <- function(tbl, title=NULL) {
+  plot_ly(tbl, x=~Response, y=~agg_percent, type="bar",
+          error_y = list(type="data",
+                         array = tbl$high_CI - tbl$agg_percent,
+                         arrayminus = tbl$agg_percent - tbl$low_CI)) %>%
+    layout(title=title, yaxis=list(title="Percentage (%)"))
+}
+
+```
+
+Question list for selectors
+
+```{r Question list}
+
+get_questions_list <- function(df) {
+  df %>% pull(Question) %>% unique()
+}
+
+```
+
+Load helpers
+
+```{r Define source}
+source("Helper_fns.R")
+```
+
+Read parquet
+
+```{r read Parquet}
+df <- arrow::read_parquet("DS_Project.parquet")
+```
+
+Apply merge cleaning functions
+
+```{r Merge cleaners}
+df <- df %>%
+  mutate(
+    ResponseID = merge_ResponseID(ResponseID),
+    Response   = merge_Response(ResponseID, Response),
+    BreakoutID = merge_BreakoutID(BreakoutID),
+    Break_Out  = merge_Break_Out(BreakoutID, Break_Out)
+  )
+
+print(names(df))
+```
+
+UI:
+
+```{r UI}
+
+# ------------- UI (With Vertical Tab Boxes + Light Gray Header) -------------
+
+classes <- df %>% distinct(Class) %>% pull(Class) %>% sort()
+
+ui <- fluidPage(
+
+  # ==== Custom CSS & JS for vertical tabs ====
+  tags$head(
+    tags$style(HTML("
+      
+      .title-box h1 {
+        color: white !important;
+      }
+      
+      .white-label label {
+        color: white !important;
+        font-weight: 600;
+      }
+      
+      .white-text {
+        color: white !important;
+      }
+      .vtab {
+        display: block;
+        width: 100%;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        background-color: #0073C2FF;
+        color: white;
+        text-align: left;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background-color 0.2s, color 0.2s;
+      }
+
+      .vtab:hover {
+        background-color: #e2e6ea;
+        color: white;
+      }
+
+      .vtab.active {
+        background-color: #e0e0e0 !important;
+        color: black !important;
+        font-weight: bold;
+        border-color: #005a99;
+      }
+    ")),
+
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('updateVTab', function(msg) {
+        $('.vtab').removeClass('active');
+        $('#' + msg).addClass('active');
+      });
+    "))
+  ),
+
+  # ==== Theme ====
+  theme = bs_theme(
+    bootswatch = "flatly",
+    primary = "#0073C2FF",
+    base_font = font_google("Lato")
+  ),
+
+  # ==== TOP LIGHT GRAY HEADER AREA ====
+  div(
+    style = "
+      background-color:#002239;
+      padding: 20px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+    ",
+
+    # TITLE
+    div(
+      h1("BRFSS Dashboard",
+         style = "color: white  !important; text-align:center; margin-top:10px; margin-bottom:25px;")
+    ),
+
+    # Dropdown Row 1
+fluidRow(
+  column(3, div(class="white-label",
+                selectInput("class", "Class", choices = classes))),
+  column(3, div(class="white-label",
+                uiOutput("topic_ui"))),
+  column(3, div(class="white-label",
+                uiOutput("question_ui"))),
+  column(3, div(class="white-label",
+                selectInput("detail_level", "Detail Level:",
+                            choices = c("Less", "More"),
+                            selected = "Less")))
+),
+
+    # ---- Button Row 2 ----
+    fluidRow(
+      column(
+        width = 12,
+        align = "center",
+        actionButton(
+          "refresh", "Refresh",
+          class = "btn-primary",
+          style = "margin-right:15px; margin-top:15px;"
+        ),
+        downloadButton("download_data", "Download Summary CSV",
+                       style = "margin-top:15px;")
+      )
+    )
+  ),
+
+  # Horizontal Separator
+  tags$hr(style = "margin-top:10px; margin-bottom:20px;"),
+
+  # ==== Vertical Tabs + Graph Panel Layout ====
+  fluidRow(
+
+    # LEFT — VERTICAL TABS
+    column(
+      width = 2,
+      style = "background-color: white; border-right:1px solid #ddd; min-height:700px;",
+
+      actionButton("tab_overall",  "Overall",             class="vtab", width="100%"),
+      actionButton("tab_gender",   "Gender",              class="vtab", width="100%"),
+      actionButton("tab_age",      "Age Group",           class="vtab", width="100%"),
+      actionButton("tab_race",     "Race / Ethnicity",    class="vtab", width="100%"),
+      actionButton("tab_education","Education",           class="vtab", width="100%"),
+      actionButton("tab_income",   "Income Level",        class="vtab", width="100%"),
+      actionButton("tab_temporal", "Temporal Trends",     class="vtab", width="100%"),
+      actionButton("tab_states",   "States / Territories",class="vtab", width="100%")
+    ),
+
+    # RIGHT — GRAPH OUTPUT
+    column(
+      width = 10,
+      style = "background-color: white;",
+      uiOutput("graph_panel")
+    )
+  )
+)
+```
+
+```{r Server}
+server <- function(input, output, session) {
+
+  # ======================================================
+  #      DROPDOWNS: Topic + Question depend on prior
+  # ======================================================
+
+  output$topic_ui <- renderUI({
+    req(input$class)
+    tops <- df %>% filter(Class == input$class) %>% distinct(Topic) %>% pull(Topic)
+    selectInput("topic", "Topic", choices = tops, selected = NULL)
+  })
+
+  output$question_ui <- renderUI({
+    req(input$class, input$topic)
+    qs <- df %>% filter(Class == input$class, Topic == input$topic) %>% distinct(Question) %>% pull(Question)
+    selectInput("question", "Question", choices = qs, selected = NULL)
+  })
+
+  # Reactive question
+  selected_question <- reactive({
+    req(input$class, input$topic, input$question)
+    input$question
+  })
+
+
+  # ======================================================
+  #                FILE DOWNLOAD
+  # ======================================================
+
+  output$download_data <- downloadHandler(
+    filename = function() {
+      paste0("BRFSS_summary_",
+             gsub("[^A-Za-z0-9]+", "_", selected_question()),
+             ".csv")
+    },
+    content = function(file) {
+      tbl <- aggregate_question(df, selected_question())
+      write.csv(tbl, file, row.names = FALSE)
+    }
+  )
+
+
+  # ======================================================
+  #       VERTICAL TABS via actionButtons
+  # ======================================================
+
+  active_tab <- reactiveVal("overall")
+
+  observeEvent(input$tab_overall,   active_tab("overall"))
+  observeEvent(input$tab_gender,    active_tab("gender"))
+  observeEvent(input$tab_age,       active_tab("age"))
+  observeEvent(input$tab_race,      active_tab("race"))
+  observeEvent(input$tab_education, active_tab("education"))
+  observeEvent(input$tab_income,    active_tab("income"))
+  observeEvent(input$tab_temporal,  active_tab("temporal"))
+  observeEvent(input$tab_states,    active_tab("location"))
+
+  observe({
+    session$sendCustomMessage("updateVTab", paste0("tab_", active_tab()))
+  })
+
+
+  # ======================================================
+  #               GRAPH PANEL SWITCHER
+  # ======================================================
+
+  output$graph_panel <- renderUI({
+    switch(active_tab(),
+           "overall"   = plotlyOutput("overall_plot"),
+           "gender"    = plotlyOutput("gender_plot"),
+           "age"       = plotlyOutput("age_plot"),
+           "race"      = plotlyOutput("race_plot"),
+           "education" = plotlyOutput("education_plot"),
+           "income"    = plotlyOutput("income_plot"),
+           "temporal"  = plotlyOutput("temporal_plot"),
+           "location"  = plotlyOutput("location_map")   # MAP HERE
+    )
+  })
+
+
+  # ======================================================
+  #               PLOTS — AUTO RENDER
+  # ======================================================
+
+  # ---- Overall ----
+  output$overall_plot <- renderPlotly({
+    req(selected_question())
+    q <- selected_question()
+    tbl <- aggregate_question(df, q)
+
+    safe_plot(tbl,
+              function(t) plot_category_panel(t, paste("Overall —", q)),
+              q)
+  })
+
+  # ---- Gender ----
+  output$gender_plot <- renderPlotly({
+    req(selected_question())
+    q <- selected_question()
+    tbl <- aggregate_by_category(df, q, "CAT2")
+
+    safe_plot(tbl,
+              function(t) plot_category_panel(t, paste("By Gender —", q)),
+              q)
+  })
+
+  # ---- Age ----
+  output$age_plot <- renderPlotly({
+    req(selected_question())
+    q <- selected_question()
+    tbl <- aggregate_by_category(df, q, "CAT3")
+
+    # Less detail collapse
+    if (input$detail_level == "Less" && nrow(tbl) > 0) {
+      tbl <- tbl %>%
+        mutate(Break_Out =
+                 case_when(
+                   Break_Out %in% c("18-24","25-34") ~ "18–34",
+                   Break_Out %in% c("35-44","45-54") ~ "35–54",
+                   TRUE ~ Break_Out)) %>%
+        group_by(Break_Out, Response) %>%
+        summarise(
+          agg_percent = mean(agg_percent, na.rm = TRUE),
+          low_CI = mean(low_CI, na.rm = TRUE),
+          high_CI = mean(high_CI, na.rm = TRUE),
+          .groups = "drop"
+        )
+    }
+
+    safe_plot(tbl,
+              function(t) plot_category_panel(t, paste("By Age Group —", q)),
+              q)
+  })
+
+  # ---- Race ----
+  output$race_plot <- renderPlotly({
+    req(selected_question())
+    q <- selected_question()
+    tbl <- aggregate_by_category(df, q, "CAT4")
+
+    safe_plot(tbl,
+              function(t) plot_category_panel(t, paste("By Race —", q)),
+              q)
+  })
+
+  # ---- Education ----
+  output$education_plot <- renderPlotly({
+    req(selected_question())
+    q <- selected_question()
+    tbl <- aggregate_by_category(df, q, "CAT5")
+
+    safe_plot(tbl,
+              function(t) plot_category_panel(t, paste("By Education —", q)),
+              q)
+  })
+
+  # ---- Income ----
+  output$income_plot <- renderPlotly({
+    req(selected_question())
+    q <- selected_question()
+    tbl <- aggregate_by_category(df, q, "CAT6")
+
+    safe_plot(tbl,
+              function(t) plot_category_panel(t, paste("By Income —", q)),
+              q)
+  })
+
+  # ---- Temporal ----
+  output$temporal_plot <- renderPlotly({
+    req(selected_question())
+    q <- selected_question()
+    tbl <- aggregate_by_year(df, q)
+
+    safe_plot(tbl,
+              function(t) plot_temporal_panel(t, paste("Trends Over Years —", q)),
+              q)
+  })
+
+  # ======================================================
+  #      STATES / TERRITORIES — U.S. CHOROPLETH MAP
+  # ======================================================
+
+  output$location_map <- renderPlotly({
+    req(selected_question())
+    q <- selected_question()
+
+    tbl <- aggregate_by_location(df, q)
+
+    safe_plot(tbl,
+      function(t) {
+
+        # Plotly USA map
+        plot_ly(
+          t,
+          type = "choropleth",
+          locations = ~Locationabbr,
+          locationmode = "USA-states",
+          z = ~agg_percent,
+      text      = ~paste(Locationabbr, "<br>",
+                         Response, "<br>",
+                         round(agg_percent, 1), "%"),
+          color = ~agg_percent,
+          colorscale = "Blues",
+          marker = list(line = list(color = "white", width = 1))
+        ) %>%
+          layout(
+            geo = list(scope = "usa"),
+            title = paste("By State —", q)
+          )
+
+      },
+      q
+    )
+  })
+
+}
+```
+
+```{r Dashboard}
+shinyApp(ui,server)
+```

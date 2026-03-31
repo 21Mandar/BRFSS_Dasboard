@@ -1,0 +1,12 @@
+Package: brfssDashboard
+Title: BRFSS Health Dashboard
+Version: 0.1.0
+Description: Interactive dashboard analyzing BRFSS data.
+Authors@R: person("Mandar Bangalore Arun", role = c("aut", "cre"))
+License: MIT
+Encoding: UTF-8
+LazyData: true
+Imports:
+    shiny,
+    tidyverse,
+    plotly

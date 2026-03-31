@@ -1,0 +1,262 @@
+---
+title: "BRFSS Dashboard Workflow"
+author: "Mandar"
+format: html
+editor: visual
+---
+
+```{r}
+install.packages('arrow')
+```
+
+```{r setup, include = FALSE}
+library(tidyverse)
+library(arrow)
+library(plotly)
+library(DT)
+library(stringr)
+```
+
+Time to load the data.
+
+```{r load_data, show_col_types = TRUE}
+df <- read_csv(" DS_Project.csv")
+
+slice_sample(df, n = 5)
+
+```
+
+Now that we have uploaded the csv file, let us merge the functions to tackle inconsistencies.
+
+```{r merge_functions}
+# Merge inconsistent Response IDs
+merge_ResponseID <- function(char_vec) {
+  char_vec <- str_replace(char_vec,"RESP025","RESP137")
+  char_vec <- str_replace(char_vec,"RESP026","RESP172")
+  char_vec <- str_replace(char_vec,"RESP029","RESP141")
+  char_vec <- str_replace(char_vec,"RESP230","RESP020")
+  char_vec <- str_replace(char_vec,"RESP231","RESP020")
+  char_vec <- str_replace(char_vec,"RESP232","RESP020")
+  char_vec <- str_replace(char_vec,"RESP196","RESP199")
+  char_vec <- str_replace(char_vec,"RESP197","RESP199")
+  char_vec <- str_replace(char_vec,"RESP198","RESP199")
+  char_vec <- str_replace(char_vec,"RESP199","RESP199")
+  char_vec <- str_replace(char_vec,"RESP200","RESP008")
+  char_vec <- str_replace(char_vec,"RESP194","RESP005")
+  char_vec <- str_replace(char_vec,"RESP195","RESP006")
+  return(char_vec)
+}
+
+# Match new Response labels to the merged IDs
+merge_Response <- function(ResponseID, Response) {
+  idx <- str_detect(ResponseID,"RESP137"); Response[idx] <- "Employed"
+  idx <- str_detect(ResponseID,"RESP172"); Response[idx] <- "Self-employed"
+  idx <- str_detect(ResponseID,"RESP141"); Response[idx] <- "Homemaker"
+  idx <- str_detect(ResponseID,"RESP020"); Response[idx] <- "$50,000+"
+  idx <- str_detect(ResponseID,"RESP199"); Response[idx] <- "Alaskan/American Native, Asian, Pac. Islander,Other"
+  idx <- str_detect(ResponseID,"RESP008"); Response[idx] <- "Multiracial"
+  idx <- str_detect(ResponseID,"RESP005"); Response[idx] <- "White"
+  idx <- str_detect(ResponseID,"RESP006"); Response[idx] <- "Black"
+  return(Response)
+}
+
+# Merge inconsistent Breakout IDs
+merge_BreakoutID <- function(char_vec) {
+  char_vec <- str_replace(char_vec,"INCOME01","INCOME1")
+  char_vec <- str_replace(char_vec,"INCOME02","INCOME2")
+  char_vec <- str_replace(char_vec,"INCOME03","INCOME3")
+  char_vec <- str_replace(char_vec,"INCOME04","INCOME4")
+  char_vec <- str_replace(char_vec,"INCOME05","INCOME5")
+  char_vec <- str_replace(char_vec,"INCOME06","INCOME5")
+  char_vec <- str_replace(char_vec,"INCOME07","INCOME5")
+  char_vec <- str_replace(char_vec,"RACE01","RACE1")
+  char_vec <- str_replace(char_vec,"RACE02","RACE2")
+  char_vec <- str_replace(char_vec,"RACE08","RACE3")
+  char_vec <- str_replace(char_vec,"RACE04","RACE4")
+  char_vec <- str_replace(char_vec,"RACE05","RACE4")
+  char_vec <- str_replace(char_vec,"RACE06","RACE4")
+  char_vec <- str_replace(char_vec,"RACE03","RACE4")
+  char_vec <- str_replace(char_vec,"RACE07","RACE5")
+  return(char_vec)
+}
+
+# Assign readable names to merged Breakouts
+merge_Break_Out <- function(BreakoutID, Break_Out) {
+  idx <- str_detect(BreakoutID,"INCOME5"); Break_Out[idx] <- "$50,000+"
+  idx <- str_detect(BreakoutID,"RACE1"); Break_Out[idx] <- "White"
+  idx <- str_detect(BreakoutID,"RACE2"); Break_Out[idx] <- "Black"
+  idx <- str_detect(BreakoutID,"RACE3"); Break_Out[idx] <- "Hispanic"
+  idx <- str_detect(BreakoutID,"RACE4"); Break_Out[idx] <- "Alaskan/American Native, Asian, Pac. Islander,Other"
+  idx <- str_detect(BreakoutID,"RACE5"); Break_Out[idx] <- "Multiracial"
+  return(Break_Out)
+}
+```
+
+Apply these functions to the uploaded data df to get them implemented. First lets verify some information before the implementation.
+
+Below we verify the kind of questions we have and how they are formatted.
+
+```{r}
+unique(df$Question[ str_detect(df$Question, "health") ])
+```
+
+```{r}
+unique(df$Break_Out[1:20])
+```
+
+Let us check the number of inputs each value of Break_Out has in the entire dataset.
+
+```{r}
+df %>%
+  count(Break_Out) %>%
+  arrange(desc(n))
+```
+
+Let us perform a sample test aggregation on a given question and onbserve the answers that follow it.
+
+```{r test_aggregation}
+
+question <- "How is your general health?"
+
+df_overall <- df |>
+  mutate(
+    Data_value = as.numeric(Data_value),
+    Sample_Size = as.numeric(Sample_Size)
+  ) |>
+  filter(
+    str_detect(Question, "general health"),
+    Break_Out == "Overall",
+    !is.na(Data_value),
+    !is.na(Sample_Size)
+  ) |>
+  rename(persons = Sample_Size) |>
+  mutate(Sample_Size = persons * 100 / Data_value) |>
+  group_by(Response) |>
+  summarise(
+    agg_ss = sum(Sample_Size, na.rm = TRUE),
+    agg_persons = sum(persons, na.rm = TRUE),
+    agg_percent = agg_persons * 100 / agg_ss,
+    agg_percent_sdev = sqrt(agg_percent * (100 - agg_percent) / agg_ss),
+    low_CI = agg_percent - 2 * agg_percent_sdev,
+    high_CI = agg_percent + 2 * agg_percent_sdev
+  )
+
+df_overall
+```
+
+Let us visualise these results using an interactive bar plot.
+
+```{r plot_overall, echo=FALSE}
+library(plotly)
+
+plot_ly(
+  df_overall,
+  x = ~Response,
+  y = ~agg_percent,
+  type = "bar",
+  error_y = list(
+    type = "data",
+    array = df_overall$high_CI - df_overall$agg_percent,
+    arrayminus = df_overall$agg_percent - df_overall$low_CI,
+    color = '#444',
+    thickness = 1.5,
+    width = 6
+  )
+) %>%
+  layout(
+    title = "Overall Health Status – 95% Confidence Intervals",
+    xaxis = list(title = "Response"),
+    yaxis = list(title = "Percentage (%)")
+  )
+```
+
+Now that the code works for a given catogory, we can implement this to work for any question and any grouping category(eg, Gender, Age, Income).
+
+```{r}
+aggregate_question <- function(df,question_pattern, breakout_value = "Overall"){
+  df |> mutate(Data_value = as.numeric(Data_value),
+               Sample_Size = as.numeric(Sample_Size)
+              ) |>
+    filter(
+      str_detect(Question, regex(question_pattern, ignore_case = TRUE)),
+      Break_Out == breakout_value,
+      !is.na(Data_value),
+      !is.na(Sample_Size)
+    ) |>
+    rename(persons = Sample_Size) |>
+    mutate(Sample_Size = persons * 100 / Data_value) |>
+    group_by(Response) |>
+    summarise(
+      agg_ss = sum(Sample_Size, na.rm = TRUE),
+      agg_Persons = sum(persons, na.rm = TRUE),
+      agg_Percent = agg_Persons *100 / agg_ss,
+      agg_percent_sdev = sqrt(agg_Percent * (100 - agg_Percent) / agg_ss),
+      low_CI = agg_Percent - 2 * agg_percent_sdev,
+      high_CI = agg_Percent + 2 * agg_percent_sdev
+    ) |>
+    arrange(desc(agg_Percent))
+}
+df_overall <- aggregate_question(df, "general health", "Overall")
+df_overall
+```
+
+```{r}
+df_overall <- aggregate_question(df, "general health", "Overall")
+df_gender_male <- aggregate_question(df, "general health", "Male")
+df_gender_female <- aggregate_question(df, "general health", "Female")
+```
+
+Checking what al categories belong to Break_Out
+
+```{r}
+df %>% count(Break_Out_Category, Break_Out)
+```
+
+```{r plot_function}
+plot_confidence_bar <- function(data, question, breakout_value) {
+  plot_ly(
+    data,
+    x = ~Response,
+    y = ~agg_Percent,
+    type = "bar",
+    error_y = list(
+      type = "data",
+      array = data$high_CI - data$agg_Percent,
+      arrayminus = data$agg_Percent - data$low_CI
+    )
+  ) %>%
+    layout(
+      title = paste0(question, " – ", breakout_value),
+      xaxis = list(title = "Response"),
+      yaxis = list(title = "Percentage (%)")
+    )
+}
+
+```
+
+```{r}
+plot_confidence_bar(df_overall, "How is your general health?", "Overall")
+plot_confidence_bar(df_gender_male, "How is your general health?", "Male")
+```
+
+```{r}
+df %>%
+  filter(str_detect(Question, "How is your general health?", ignore_case=TRUE)) %>%
+  distinct(Break_Out) %>%
+  print(n=5)
+```
+
+```{r}
+
+df %>% count(Break_Out) %>% arrange(desc(n))
+
+```
+
+```{r}
+df %>%
+  filter(
+    str_detect(Question, regex("Adults who are current e-cigarette users", ignore_case = TRUE)),
+    BreakOutCategoryID == "CAT2"
+  ) %>% 
+  head()
+```
