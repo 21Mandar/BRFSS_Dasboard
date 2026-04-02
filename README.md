@@ -87,6 +87,6 @@ shiny::runApp("app.R")
 ---
 
 ## Author
-Your Name  Mandar Bangalore Arun
-LinkedIn: https://www.linkedin.com/in/mandar-arun/
+Mandar Bangalore Arun |
+LinkedIn: https://www.linkedin.com/in/mandar-arun/ |
 GitHub: https://github.com/21Mandar
