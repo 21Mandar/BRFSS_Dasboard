@@ -53,7 +53,9 @@ shiny::runApp("app.R")
 ---
 
 ## Dashboard Preview
-(Add screenshots here)
+<p align="center">
+  <img src="sample_imgs/Screenshot 2026-04-02 at 19.27.07.png" width="100%">
+</p>
 
 ---
 
