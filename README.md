@@ -57,6 +57,11 @@ shiny::runApp("app.R")
   <img src="sample_imgs/Screenshot 2026-04-02 at 19.27.07.png" width="100%">
 </p>
 
+<p align="center">
+  <img src="sample_imgs/Screenshot 2026-04-02 at 19.28.10.png" width="100%">
+</p>
+
+
 ---
 
 ## Key Insights
